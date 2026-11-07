@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#1A73E8">
+  <meta name="description" content="Fast direct peer-to-peer file sharing between devices on the same WiFi network using WebRTC.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="sendit">
+  
+  <title>sendit — Fast P2P WiFi File Sharing</title>
+  
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/svg+xml" href="/assets/icons/app-icon.svg">
+  <link rel="apple-touch-icon" href="/assets/icons/app-icon.svg">
+
+  <script>
+    // Force purge any stale service workers and cached assets
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function(regs) {
+        for (var r of regs) { r.unregister(); }
+      });
+    }
+    if ('caches' in window) {
+      caches.keys().then(function(keys) {
+        for (var k of keys) { caches.delete(k); }
+      });
+    }
+  </script>
+  <style>
+    /* Hard-kill all popups and toast overlays */
+    #toast-container, .toast-container, .toast {
+      display: none !important;
+      visibility: hidden !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+      height: 0 !important;
+      width: 0 !important;
+      overflow: hidden !important;
+    }
+  </style>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="/css/variables.css?v=100">
+  <link rel="stylesheet" href="/css/animations.css?v=100">
+  <link rel="stylesheet" href="/css/main.css?v=100">
+</head>
+<body>
+
+  <!-- Fullscreen Drag & Drop Overlay -->
+  <div id="dropzone-overlay" class="dropzone-overlay" aria-hidden="true">
+    <div class="dropzone-box">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent-primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <div style="font-size: 1.15rem; font-weight: 700; color: var(--text-primary);">Drop Files to Send</div>
+      <div style="font-size: 0.88rem; color: var(--text-secondary);">Files will transfer directly to the chosen peer</div>
+    </div>
+  </div>
+
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-title">sendit</span>
+      </div>
+
+      <div class="header-actions">
+        <!-- PWA 1-Click Install Button -->
+        <button id="btn-install-pwa" class="btn btn-secondary btn-sm header-install-btn" style="display: none;" title="Install sendit App" aria-label="Install App">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          <span>Install</span>
+        </button>
+
+        <!-- User Profile Chip -->
+        <button id="btn-profile-chip" class="profile-chip" title="Edit your device profile">
+          <span id="profile-chip-icon" class="profile-chip-icon"></span>
+          <span id="profile-chip-name" class="profile-chip-name">Loading...</span>
+        </button>
+
+        <!-- Transfer History Button -->
+        <button id="btn-history" class="btn-icon" title="Transfer History" aria-label="Transfer History">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+          <span id="history-badge" class="badge-count" style="display: none;">0</span>
+        </button>
+
+        <!-- Dark Mode Toggle Button -->
+        <button id="btn-theme-toggle" class="btn-icon" title="Toggle Dark/Light Mode" aria-label="Toggle Theme">
+          <svg id="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+            <circle cx="12" cy="12" r="5"/>
+            <line x1="12" y1="1" x2="12" y2="3"/>
+            <line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/>
+            <line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+          <svg id="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+
+        <!-- How It Works / FAQ Button -->
+        <button id="btn-info" class="btn-icon" title="How It Works & FAQ" aria-label="How It Works">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="16" x2="12" y2="12"/>
+            <line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Network & WiFi Telemetry Bar -->
+    <div class="network-status-bar">
+      <div class="status-pill">
+        <span id="network-status-dot" class="status-dot"></span>
+        <span id="network-status-text">Connecting...</span>
+      </div>
+      <div class="telemetry-badges">
+        <span class="telemetry-chip" title="Direct WebRTC Peer-to-Peer SCTP Connection">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Direct P2P
+        </span>
+        <button class="room-tag-btn" id="network-room-tag" title="Click to view or change pair code">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="4" y1="9" x2="20" y2="9"/>
+            <line x1="4" y1="15" x2="20" y2="15"/>
+            <line x1="10" y1="3" x2="8" y2="21"/>
+            <line x1="16" y1="3" x2="14" y2="21"/>
+          </svg>
+          <span id="room-tag-label">Room: Local WiFi</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Device Beacon / Discovery Stage -->
+    <section class="beacon-stage">
+      <!-- Ambient Backlight Field -->
+      <div class="beacon-ambient-field" aria-hidden="true">
+        <div class="beacon-core-glow"></div>
+      </div>
+
+      <!-- Center Floating User Node -->
+      <div id="user-device-node" class="user-device-node" title="Click to edit your device profile">
+        <div class="beacon-float-wrapper">
+          <div id="user-node-avatar" class="user-node-avatar">
+            <!-- Populated by JS -->
+          </div>
+          <!-- 3D Optical Ground Shadow beneath floating puck -->
+          <div class="beacon-ground-shadow" aria-hidden="true"></div>
+        </div>
+        <div class="user-node-info">
+          <div id="user-node-name" class="user-node-name">This Device</div>
+          <span class="user-node-role">
+            <span class="status-pulse-dot"></span>
+            You (Discoverable)
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Real Empty State: When No Peers Are Discovered -->
+    <section id="discovery-empty-state" class="discovery-status-card" style="display: none;">
+      <div class="discovery-icon-pill">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+        <span>WiFi Network Discovery</span>
+      </div>
+      <div class="discovery-title">Looking for devices on your WiFi</div>
+      <div class="discovery-subtitle">
+        Open sendit on another phone, tablet, or laptop connected to the same WiFi network to see it appear here.
+      </div>
+      <div class="discovery-share-row">
+        <div id="share-lan-url" class="lan-url-box">http://...</div>
+        <button id="btn-copy-url" class="btn btn-secondary btn-sm">Copy Link</button>
+        <button id="btn-show-qr" class="btn btn-secondary btn-sm">Scan QR</button>
+        <button id="btn-empty-room" class="btn btn-secondary btn-sm" title="Join or create a pair code">Pair Code</button>
+      </div>
+    </section>
+
+    <!-- Discovered Nearby Peers Grid -->
+    <section id="peers-section" class="peers-section" style="display: none;">
+      <div class="section-header">
+        <span class="section-title">Nearby Devices</span>
+        <span id="peers-count-label" style="font-size: 0.82rem; color: var(--text-tertiary);">0 available</span>
+      </div>
+      <div id="peers-grid" class="peers-grid">
+        <!-- Discovered peer cards dynamically inserted here -->
+      </div>
+    </section>
+  </div>
+
+  <!-- Hidden File Input for Picker -->
+  <input type="file" id="global-file-input" multiple style="display: none;">
+
+  <!-- ================= MODALS & BOTTOM SHEETS ================= -->
+
+  <!-- 1. Device Onboarding & Profile Modal -->
+  <div id="modal-profile" class="modal-backdrop">
+    <div class="modal-content">
+      <div class="sheet-handle-bar"><div class="sheet-handle"></div></div>
+      <div class="modal-header">
+        <div class="modal-title" id="profile-modal-title">Device Profile</div>
+        <button id="btn-close-profile" class="btn-icon" style="display: none;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 0.92rem; color: var(--text-secondary);">
+          Choose what device you are using so nearby peers on your WiFi can identify you.
+        </p>
+
+        <!-- 3 Large Selectable Cards -->
+        <div class="device-select-grid">
+          <div class="device-select-card" data-device="ios">
+            <span id="detected-ios-badge" class="detected-badge" style="display: none;">Detected</span>
+            <div class="device-select-icon">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.37c.61-.75 1.04-1.8 0.92-2.87-.9.04-2 .6-2.65 1.35-.57.65-1.07 1.71-.94 2.74 1.01.08 2.06-.5 2.67-1.22z"/></svg>
+            </div>
+            <div class="device-select-label">Apple / iOS</div>
+          </div>
+
+          <div class="device-select-card" data-device="android">
+            <span id="detected-android-badge" class="detected-badge" style="display: none;">Detected</span>
+            <div class="device-select-icon">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 18c0 .55.45 1 1 1h1v3.5c0 .83.67 1.5 1.5 1.5s1.5-.67 1.5-1.5V19h2v3.5c0 .83.67 1.5 1.5 1.5s1.5-.67 1.5-1.5V19h1c.55 0 1-.45 1-1V8H6v10zM3.5 8C2.67 8 2 8.67 2 9.5v6c0 .83.67 1.5 1.5 1.5S5 16.33 5 15.5v-6C5 8.67 4.33 8 3.5 8zm17 0c-.83 0-1.5.67-1.5 1.5v6c0 .83.67 1.5 1.5 1.5s1.5-.67 1.5-1.5v-6c0-.83-.67-1.5-1.5-1.5zm-4.97-4.84l1.3-1.3c.2-.2.2-.51 0-.71-.2-.2-.51-.2-.71 0l-1.48 1.48C13.85 2.23 12.95 2 12 2c-.96 0-1.86.23-2.66.63L7.85 1.15c-.2-.2-.51-.2-.71 0-.2.2-.2.51 0 .71l1.31 1.31C6.97 4.26 6 6.01 6 8h12c0-1.99-.97-3.75-2.47-4.84zM10 5H9V4h1v1zm5 0h-1V4h1v1z"/></svg>
+            </div>
+            <div class="device-select-label">Android</div>
+          </div>
+
+          <div class="device-select-card" data-device="windows">
+            <span id="detected-windows-badge" class="detected-badge" style="display: none;">Detected</span>
+            <div class="device-select-icon">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.44l7.53-1.03v7.03H3V5.44zm0 13.12l7.53 1.03v-7.03H3v6zm8.56 1.17L21 21.2v-8.64h-9.44v7.17zM11.56 4.27v7.17H21V2.8L11.56 4.27z"/></svg>
+            </div>
+            <div class="device-select-label">Windows / PC</div>
+          </div>
+        </div>
+
+        <div class="input-group">
+          <label class="input-label" for="profile-name-input">Device Name</label>
+          <input type="text" id="profile-name-input" class="input-text" maxlength="40" placeholder="e.g. Alex's iPhone">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-save-profile" class="btn btn-primary btn-block">Continue to Radar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Selected Files Review Modal -->
+  <div id="modal-files" class="modal-backdrop">
+    <div class="modal-content">
+      <div class="sheet-handle-bar"><div class="sheet-handle"></div></div>
+      <div class="modal-header">
+        <div class="modal-title">Ready to Send</div>
+        <button id="btn-close-files" class="btn-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 8px;">
+          Sending to: <strong id="send-target-peer-name" style="color: var(--text-primary);">Peer</strong>
+        </div>
+
+        <div id="selected-files-list" class="file-list">
+          <!-- Files listed here -->
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+          <button id="btn-add-more-files" class="btn btn-outline btn-sm">Add More Files</button>
+          <div id="selected-files-summary" style="font-size: 0.86rem; font-weight: 600; color: var(--text-secondary);">0 files • 0 B</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-files" class="btn btn-secondary">Cancel</button>
+        <button id="btn-confirm-send" class="btn btn-primary">Send Files</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Incoming Transfer Request Modal (Receiver) -->
+  <div id="modal-request" class="modal-backdrop">
+    <div class="modal-content">
+      <div class="sheet-handle-bar"><div class="sheet-handle"></div></div>
+      <div class="modal-header">
+        <div class="modal-title">Incoming File Transfer</div>
+      </div>
+      <div class="modal-body">
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+          <div id="request-sender-icon" class="peer-card-icon-wrap" style="width: 46px; height: 46px;">
+            <!-- Icon -->
+          </div>
+          <div>
+            <div id="request-sender-name" style="font-size: 1.05rem; font-weight: 700; color: var(--text-primary);">Alice's iPhone</div>
+            <div id="request-summary-line" style="font-size: 0.86rem; color: var(--text-secondary);">wants to send you 2 files (45.2 MB)</div>
+          </div>
+        </div>
+
+        <div id="request-files-list" class="file-list">
+          <!-- Files listed here -->
+        </div>
+
+        <div id="request-ios-warning" class="discovery-status-card" style="display: none; background: var(--color-warning-bg); border-color: rgba(227, 116, 0, 0.3); margin-top: 12px; padding: 12px; text-align: left;">
+          <div style="display: flex; align-items: center; gap: 6px; font-size: 0.84rem; font-weight: 600; color: var(--color-warning);">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            iOS Safari Memory Notice
+          </div>
+          <div style="font-size: 0.78rem; color: var(--text-primary); margin-top: 4px;">
+            Transfer is over 800 MB. iOS Safari restricts tab RAM (~1 GB). Keep screen awake and close other browser tabs.
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-decline-request" class="btn btn-outline" style="flex: 1;">Decline</button>
+        <button id="btn-accept-request" class="btn btn-primary" style="flex: 1;">Accept & Download</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. Waiting for Recipient Response (Sender) -->
+  <div id="modal-waiting" class="modal-backdrop">
+    <div class="modal-content" style="max-width: 440px;">
+      <div class="modal-body" style="text-align: center; padding: 32px 20px;">
+        <div style="width: 60px; height: 60px; margin: 0 auto 16px; border-radius: 50%; border: 3px solid var(--accent-subtle); border-top-color: var(--accent-primary); animation: spin 1s linear infinite;"></div>
+        <div style="font-size: 1.15rem; font-weight: 700; color: var(--text-primary);" id="waiting-headline">Waiting for response...</div>
+        <div style="font-size: 0.88rem; color: var(--text-secondary); margin-top: 6px;" id="waiting-peer-sub">
+          Waiting for recipient to accept the transfer request.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-waiting" class="btn btn-secondary btn-block">Cancel Request</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. Active Transfer Screen Modal -->
+  <div id="modal-transfer" class="modal-backdrop">
+    <div class="modal-content">
+      <div class="sheet-handle-bar"><div class="sheet-handle"></div></div>
+      <div class="modal-header">
+        <div class="modal-title" id="transfer-headline-text">Transferring Files...</div>
+      </div>
+      <div class="modal-body">
+        <div class="transfer-card">
+          <!-- Peers Banner -->
+          <div class="transfer-peers-banner">
+            <div class="transfer-peer-node">
+              <div id="tx-node-sender-icon"></div>
+              <div id="tx-node-sender-name" class="transfer-peer-name">Sender</div>
+            </div>
+            <div class="transfer-beam-indicator">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+            </div>
+            <div class="transfer-peer-node">
+              <div id="tx-node-receiver-icon"></div>
+              <div id="tx-node-receiver-name" class="transfer-peer-name">Receiver</div>
+            </div>
+          </div>
+
+          <!-- Percentage & Progress Bar -->
+          <div class="transfer-headline">
+            <div id="tx-percentage" class="transfer-percentage">0%</div>
+            <div id="tx-current-filename" style="font-size: 0.84rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 4px;">Preparing transfer...</div>
+          </div>
+
+          <div class="progress-track">
+            <div id="tx-progress-fill" class="progress-fill"></div>
+          </div>
+
+          <!-- Real Metrics Grid -->
+          <div class="metrics-grid">
+            <div class="metric-box">
+              <div id="tx-metric-speed" class="metric-value">0 KB/s</div>
+              <div class="metric-label">Speed</div>
+            </div>
+            <div class="metric-box">
+              <div id="tx-metric-transferred" class="metric-value">0 B / 0 B</div>
+              <div class="metric-label">Transferred</div>
+            </div>
+            <div class="metric-box">
+              <div id="tx-metric-eta" class="metric-value">--:--</div>
+              <div class="metric-label">ETA Remaining</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-transfer" class="btn btn-danger btn-block">Cancel Transfer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. Transfer Complete Modal -->
+  <div id="modal-complete" class="modal-backdrop">
+    <div class="modal-content">
+      <div class="sheet-handle-bar"><div class="sheet-handle"></div></div>
+      <div class="modal-header">
+        <div class="modal-title">Transfer Complete</div>
+      </div>
+      <div class="modal-body">
+        <div style="text-align: center; margin-bottom: 20px;">
+          <div style="width: 64px; height: 64px; border-radius: 50%; background: var(--color-success-bg); color: var(--color-success); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 12px;">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          </div>
+          <div style="font-size: 1.25rem; font-weight: 700; color: var(--text-primary);">Files Transferred Successfully</div>
+          <div id="complete-summary-stats" style="font-size: 0.88rem; color: var(--text-secondary); margin-top: 6px;">
+            <!-- e.g. 3 files (45.2 MB) in 4.2s at avg 10.8 MB/s -->
+          </div>
+        </div>
+
+        <div id="complete-files-container">
+          <div style="font-size: 0.86rem; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; margin-bottom: 8px;">Received Files</div>
+          <div id="complete-files-list" class="file-list">
+            <!-- Download / Open actions per file -->
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-complete-done" class="btn btn-primary btn-block">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 7. Session Transfer History Modal -->
+  <div id="modal-history" class="modal-backdrop">
+    <div class="modal-content">
+      <div class="sheet-handle-bar"><div class="sheet-handle"></div></div>
+      <div class="modal-header">
+        <div class="modal-title">Session History</div>
+        <button id="btn-close-history" class="btn-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div id="history-items-container" class="history-list">
+          <!-- Session history items -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-clear-history" class="btn btn-secondary">Clear History</button>
+        <button id="btn-dismiss-history" class="btn btn-primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. How It Works & FAQ Modal -->
+  <div id="modal-info" class="modal-backdrop">
+    <div class="modal-content">
+      <div class="sheet-handle-bar"><div class="sheet-handle"></div></div>
+      <div class="modal-header">
+        <div class="modal-title">How sendit Works</div>
+        <button id="btn-close-info" class="btn-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="faq-accordion">
+          <div class="faq-card">
+            <div class="faq-q">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              Direct Device-to-Device WebRTC
+            </div>
+            <div class="faq-a">
+              Files are transferred directly between devices using WebRTC RTCDataChannel over your local WiFi. Files never touch, pass through, or get saved onto any server.
+            </div>
+          </div>
+
+          <div class="faq-card">
+            <div class="faq-q">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+              Same WiFi Discovery
+            </div>
+            <div class="faq-a">
+              Browsers cannot broadcast raw UDP/mDNS packets. sendit groups connected clients sharing the same local private network or public router IP into a shared room so you see each other in real-time.
+            </div>
+          </div>
+
+          <div class="faq-card">
+            <div class="faq-q">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              Real Runtime Data
+            </div>
+            <div class="faq-a">
+              No fake devices, no simulated files, no fake speeds. Every device, file, progress percent, and MB/s rate is computed from real WebRTC SCTP packets and stream timers.
+            </div>
+          </div>
+
+          <div class="faq-card">
+            <div class="faq-q">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+              Platform Limitations & Honest Capabilities
+            </div>
+            <div class="faq-a">
+              <table class="platform-limits-table">
+                <thead>
+                  <tr>
+                    <th>Platform</th>
+                    <th>Max File Size</th>
+                    <th>Direct Disk Streaming</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>Windows / Mac Chrome & Edge</strong></td>
+                    <td>Unlimited (Multi-GB)</td>
+                    <td>Yes (File System Access API)</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Android Chrome</strong></td>
+                    <td>Multi-GB</td>
+                    <td>Yes (Native download stream)</td>
+                  </tr>
+                  <tr>
+                    <td><strong>iOS Safari (iPhone/iPad)</strong></td>
+                    <td>~800 MB - 1 GB</td>
+                    <td>No (Restricted tab RAM)</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div style="font-size: 0.78rem; color: var(--text-tertiary); margin-top: 8px;">
+                Note: iOS Safari enforces strict memory caps on browser tabs. If a file exceeds available RAM, WebKit may reload the tab. For gigabyte-size files, Android or desktop browsers are recommended.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-dismiss-info" class="btn btn-primary btn-block">Got It</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 9. QR Code Modal for Easy Phone Pairing -->
+  <div id="modal-qr" class="modal-backdrop">
+    <div class="modal-content" style="max-width: 440px;">
+      <div class="modal-header">
+        <div class="modal-title">Scan on Mobile</div>
+        <button id="btn-close-qr" class="btn-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body qr-modal-body">
+        <div class="qr-canvas-wrap">
+          <canvas id="qr-canvas" width="220" height="220"></canvas>
+        </div>
+        <div style="font-size: 0.88rem; color: var(--text-secondary);">
+          Scan this QR code with your phone camera while connected to the same WiFi.
+        </div>
+        <div id="qr-url-text" class="lan-url-box" style="word-break: break-all;"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-copy-qr-url" class="btn btn-secondary">Copy Link</button>
+        <button id="btn-dismiss-qr" class="btn btn-primary">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 10. Send Text or Link Modal -->
+  <div id="modal-send-text" class="modal-backdrop">
+    <div class="modal-content" style="max-width: 480px;">
+      <div class="sheet-handle-bar"><div class="sheet-handle"></div></div>
+      <div class="modal-header">
+        <div class="modal-title">Send Text or Link</div>
+        <button id="btn-close-send-text" class="btn-icon" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size: 0.88rem; color: var(--text-secondary); margin-bottom: 12px;">
+          Sending to: <strong id="send-text-target-peer" style="color: var(--text-primary);">Peer</strong>
+        </div>
+        <div class="text-composer-wrapper">
+          <textarea id="send-text-input" class="text-composer-area" rows="5" placeholder="Type a message, note, Wi-Fi password, or paste a link..."></textarea>
+          <div class="text-composer-toolbar">
+            <button id="btn-paste-clipboard" class="btn btn-secondary btn-sm" type="button" style="padding: 6px 14px; font-size: 0.8rem; min-height: 32px;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+              Paste Clipboard
+            </button>
+            <span id="send-text-char-count" class="composer-char-count">0 characters</span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-send-text" class="btn btn-secondary">Cancel</button>
+        <button id="btn-confirm-send-text" class="btn btn-primary">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          Send Now
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 11. Received Note Modal -->
+  <div id="modal-receive-text" class="modal-backdrop">
+    <div class="modal-content" style="max-width: 480px;">
+      <div class="sheet-handle-bar"><div class="sheet-handle"></div></div>
+      <div class="modal-header">
+        <div class="modal-title">Received Note</div>
+        <button id="btn-close-receive-text" class="btn-icon" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="receive-text-header">
+          <div id="receive-text-sender-icon" class="peer-card-icon-wrap" style="width: 42px; height: 42px;"></div>
+          <div>
+            <div id="receive-text-sender-name" style="font-weight: 700; color: var(--text-primary); font-size: 0.98rem;">Peer</div>
+            <div id="receive-text-time" style="font-size: 0.78rem; color: var(--text-tertiary);">Direct P2P transmission</div>
+          </div>
+        </div>
+
+        <div id="receive-text-box" class="received-text-box"></div>
+
+        <div id="receive-link-action" style="display: none; margin-top: 12px;">
+          <a id="receive-link-btn" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm btn-block" style="text-decoration: none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            Open Link in New Tab
+          </a>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-copy-received-text" class="btn btn-secondary">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <span id="copy-btn-label">Copy Text</span>
+        </button>
+        <button id="btn-dismiss-receive-text" class="btn btn-primary">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 12. Network Room & Pair Code Modal -->
+  <div id="modal-room" class="modal-backdrop">
+    <div class="modal-content" style="max-width: 460px;">
+      <div class="sheet-handle-bar"><div class="sheet-handle"></div></div>
+      <div class="modal-header">
+        <div class="modal-title">Network Room & Pair Code</div>
+        <button id="btn-close-room" class="btn-icon" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 0.88rem; color: var(--text-secondary); line-height: 1.5; margin-bottom: 14px;">
+          Devices on the same WiFi discover each other automatically. If your router uses <strong>Client Isolation</strong>, or you are on guest WiFi or a phone hotspot, use a shared Pair Code.
+        </p>
+
+        <div class="current-room-card">
+          <div style="font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); font-weight: 700;">Active Room</div>
+          <div id="room-current-display" style="font-size: 1.05rem; font-weight: 700; color: var(--accent-primary); margin-top: 3px;">Local WiFi (Automatic)</div>
+        </div>
+
+        <div class="input-group" style="margin-top: 16px;">
+          <label class="input-label" for="room-code-input">Pair Code or Room Name</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="room-code-input" class="input-text" maxlength="24" placeholder="e.g. 7482 or TEAM" style="text-transform: uppercase;">
+            <button id="btn-gen-room-code" class="btn btn-secondary btn-sm" type="button" title="Generate random 4-digit code" style="white-space: nowrap; padding: 0 16px;">
+              Random
+            </button>
+          </div>
+        </div>
+
+        <div style="margin-top: 12px; display: flex; justify-content: flex-end;">
+          <button id="btn-reset-room" class="btn-link" type="button" style="font-size: 0.82rem; color: var(--text-tertiary); background: none; border: none; cursor: pointer; text-decoration: underline;">
+            Reset to Automatic WiFi Discovery
+          </button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-room" class="btn btn-secondary">Cancel</button>
+        <button id="btn-confirm-room" class="btn btn-primary">Join Room</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main JavaScript App Entrypoint -->
+  <script type="module" src="/js/app.js?v=100"></script>
+</body>
+</html>

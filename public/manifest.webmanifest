@@ -1,0 +1,19 @@
+{
+  "name": "sendit - P2P WiFi File Share",
+  "short_name": "sendit",
+  "description": "Fast direct peer-to-peer file sharing between devices on the same WiFi network.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F7F8FA",
+  "theme_color": "#1A73E8",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/assets/icons/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["utilities", "productivity"]
+}

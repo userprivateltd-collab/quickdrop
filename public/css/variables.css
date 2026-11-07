@@ -1,0 +1,138 @@
+/**
+ * BeamDrop Design System Tokens
+ * 2026 Apple iOS + Linear + Google Material 3 Design Blend
+ */
+
+:root {
+  /* Typography */
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "SF Mono", Menlo, Consolas, ui-monospace, monospace;
+
+  /* Light Theme Colors (Clean Apple Ceramic) */
+  --bg-app: #F8F9FC;
+  --bg-surface: #FFFFFF;
+  --bg-surface-elevated: #FFFFFF;
+  --bg-surface-subtle: #F1F4F9;
+  --bg-card: rgba(255, 255, 255, 0.92);
+  --bg-card-hover: #FFFFFF;
+  --bg-sheet: #FFFFFF;
+  --bg-overlay: rgba(15, 20, 30, 0.4);
+
+  --border-subtle: #E8ECF2;
+  --border-default: #DCE2EC;
+  --border-strong: #C4CDDD;
+
+  --glass-bg: rgba(255, 255, 255, 0.82);
+  --glass-border: rgba(255, 255, 255, 0.9);
+  --glass-blur: blur(20px);
+  --rim-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.85);
+  --card-rim: inset 0 1px 0 0 rgba(255, 255, 255, 0.95);
+
+  --text-primary: #111418;
+  --text-secondary: #576071;
+  --text-tertiary: #8792A5;
+  --text-inverse: #FFFFFF;
+
+  /* Accent - Refined Blue */
+  --accent-primary: #1A73E8;
+  --accent-hover: #1557B0;
+  --accent-active: #12468F;
+  --accent-subtle: #EAF2FD;
+  --accent-border: #C6DCFB;
+  --accent-contrast: #FFFFFF;
+
+  /* Status Colors */
+  --color-success: #137333;
+  --color-success-bg: #E6F4EA;
+  --color-warning: #B06000;
+  --color-warning-bg: #FEF7E0;
+  --color-error: #C5221F;
+  --color-error-bg: #FCE8E6;
+
+  /* Elevation & Multi-layer Shadows */
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 1px rgba(16, 24, 40, 0.02);
+  --shadow-md: 0 4px 12px -2px rgba(16, 24, 40, 0.06), 0 2px 6px -1px rgba(16, 24, 40, 0.03);
+  --shadow-lg: 0 16px 36px -4px rgba(16, 24, 40, 0.08), 0 6px 16px -2px rgba(16, 24, 40, 0.04);
+  --shadow-sheet: 0 -12px 40px rgba(16, 24, 40, 0.12);
+  --shadow-radar: 0 4px 20px rgba(26, 115, 232, 0.08);
+
+  /* Radar & Sonar Visual Tokens */
+  --sonar-ring: rgba(26, 115, 232, 0.14);
+  --sonar-dashed-ring: rgba(26, 115, 232, 0.08);
+  --sonar-sweep: conic-gradient(from 0deg at 50% 50%, rgba(26, 115, 232, 0) 0deg, rgba(26, 115, 232, 0) 300deg, rgba(26, 115, 232, 0.09) 360deg);
+  --ambient-glow: radial-gradient(circle at center, rgba(26, 115, 232, 0.06) 0%, rgba(26, 115, 232, 0) 70%);
+
+  /* Border Radii */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --radius-xl: 28px;
+  --radius-full: 9999px;
+
+  /* Layout & Viewport */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --max-content-width: 680px;
+
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.2, 0, 0, 1);
+  --transition-normal: 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-spring: 380ms cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+/* Dark Theme Overrides (High-End Obsidian Glass) */
+[data-theme="dark"] {
+  --bg-app: #090B0E;
+  --bg-surface: #11141A;
+  --bg-surface-elevated: #161A22;
+  --bg-surface-subtle: #13171F;
+  --bg-card: rgba(17, 20, 26, 0.85);
+  --bg-card-hover: rgba(24, 29, 38, 0.95);
+  --bg-sheet: #11141A;
+  --bg-overlay: rgba(0, 0, 0, 0.75);
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.18);
+
+  --glass-bg: rgba(17, 20, 26, 0.78);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-blur: blur(24px);
+  --rim-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.15);
+  --card-rim: inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+
+  --text-primary: #F3F5F9;
+  --text-secondary: #9DA5B4;
+  --text-tertiary: #677080;
+  --text-inverse: #090B0E;
+
+  /* Dark Accent */
+  --accent-primary: #8AB4F8;
+  --accent-hover: #A8C7FA;
+  --accent-active: #669DF6;
+  --accent-subtle: rgba(138, 180, 248, 0.12);
+  --accent-border: rgba(138, 180, 248, 0.28);
+  --accent-contrast: #090B0E;
+
+  /* Dark Status Colors */
+  --color-success: #81C995;
+  --color-success-bg: rgba(129, 201, 149, 0.12);
+  --color-warning: #FDD663;
+  --color-warning-bg: rgba(253, 214, 99, 0.12);
+  --color-error: #F28B82;
+  --color-error-bg: rgba(242, 139, 130, 0.12);
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.65);
+  --shadow-sheet: 0 -12px 40px rgba(0, 0, 0, 0.75);
+  --shadow-radar: 0 4px 24px rgba(0, 0, 0, 0.5);
+
+  --sonar-ring: rgba(255, 255, 255, 0.08);
+  --sonar-dashed-ring: rgba(255, 255, 255, 0.04);
+  --sonar-sweep: conic-gradient(from 0deg at 50% 50%, rgba(138, 180, 248, 0) 0deg, rgba(138, 180, 248, 0) 300deg, rgba(138, 180, 248, 0.07) 360deg);
+  --ambient-glow: radial-gradient(circle at center, rgba(138, 180, 248, 0.08) 0%, rgba(138, 180, 248, 0) 70%);
+}
