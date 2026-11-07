@@ -1,6 +1,6 @@
 /**
  * BeamDrop WebRTC PeerConnection & DataChannel Manager
- * Direct peer-to-peer connection lifecycle, ICE handling, and state tracking.
+ * Ultra-fast direct peer-to-peer connection lifecycle, ICE handling, and state tracking.
  */
 
 export class WebRTCConnection {
@@ -11,9 +11,10 @@ export class WebRTCConnection {
    */
   constructor(targetPeerId, iceServers = [], signalSender) {
     this.targetPeerId = targetPeerId;
-    this.iceServers = iceServers.length > 0 ? iceServers : [
+    // Use the 2 fastest STUN servers to avoid parallel query congestion and timeouts
+    this.iceServers = iceServers.length > 0 ? iceServers.slice(0, 2) : [
       { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' }
+      { urls: 'stun:stun.cloudflare.com:3478' }
     ];
     this.signalSender = signalSender;
 
@@ -22,6 +23,7 @@ export class WebRTCConnection {
     this.isInitiator = false;
     this.pendingIceCandidates = [];
     this.isClosed = false;
+    this.connectionWatchdog = null;
 
     // Callbacks
     this.onChannelOpen = () => {};
@@ -29,6 +31,7 @@ export class WebRTCConnection {
     this.onChannelClose = () => {};
     this.onError = () => {};
     this.onConnectionStateChange = () => {};
+    this.onStatusText = () => {};
   }
 
   initPeerConnection() {
@@ -36,13 +39,13 @@ export class WebRTCConnection {
 
     const rtcConfig = {
       iceServers: this.iceServers,
-      iceCandidatePoolSize: 2
+      iceCandidatePoolSize: 0 // Avoid pre-allocated candidate pools which cause stale sockets
     };
 
     this.pc = new RTCPeerConnection(rtcConfig);
 
     this.pc.onicecandidate = (event) => {
-      if (event.candidate) {
+      if (event.candidate && event.candidate.candidate) {
         this.signalSender(this.targetPeerId, {
           type: 'ice-candidate',
           candidate: event.candidate.toJSON()
@@ -50,27 +53,94 @@ export class WebRTCConnection {
       }
     };
 
+    // Both iceConnectionState and connectionState for complete cross-browser support (iOS Safari)
+    this.pc.oniceconnectionstatechange = () => {
+      const iceState = this.pc ? this.pc.iceConnectionState : 'closed';
+      console.log(`[BeamDrop WebRTC] ICE state: ${iceState}`);
+      this.evaluateState(iceState);
+    };
+
     this.pc.onconnectionstatechange = () => {
       const state = this.pc ? this.pc.connectionState : 'closed';
       console.log(`[BeamDrop WebRTC] Connection state: ${state}`);
-      this.onConnectionStateChange(state);
-
-      if (state === 'failed' || state === 'closed') {
-        this.onError(new Error(`WebRTC connection ${state}`));
-      }
+      this.evaluateState(state);
     };
 
     this.pc.ondatachannel = (event) => {
       console.log('[BeamDrop WebRTC] DataChannel received from remote peer.');
       this.setupDataChannel(event.channel);
     };
+
+    this.startWatchdog();
+  }
+
+  evaluateState(state) {
+    this.onConnectionStateChange(state);
+
+    if (state === 'connected') {
+      this.clearWatchdog();
+      if (this.onStatusText) this.onStatusText('Direct P2P Link Established');
+    } else if (state === 'checking') {
+      if (this.onStatusText) this.onStatusText('Finding optimal local Wi-Fi route...');
+    } else if (state === 'failed') {
+      console.warn('[BeamDrop WebRTC] Connection failed, attempting ICE restart...');
+      if (this.isInitiator && !this.isClosed) {
+        this.restartIce().catch(() => {});
+      } else {
+        this.onError(new Error('Direct P2P link failed. Verify both devices are on the same Wi-Fi and router does not isolate clients.'));
+      }
+    }
+  }
+
+  startWatchdog() {
+    this.clearWatchdog();
+    // 9-second connection watchdog: if still not open, trigger ICE restart or notify
+    this.connectionWatchdog = setTimeout(() => {
+      if (this.dataChannel && this.dataChannel.readyState === 'open') return;
+      if (this.pc && (this.pc.iceConnectionState === 'connected' || this.pc.connectionState === 'connected')) return;
+
+      console.warn('[BeamDrop WebRTC] Connection handshake taking long, kicking ICE restart...');
+      if (this.onStatusText) this.onStatusText('Re-routing local connection...');
+      if (this.isInitiator && !this.isClosed) {
+        this.restartIce().catch(err => {
+          console.warn('[BeamDrop WebRTC] Watchdog ICE restart error:', err);
+        });
+      }
+    }, 9000);
+  }
+
+  clearWatchdog() {
+    if (this.connectionWatchdog) {
+      clearTimeout(this.connectionWatchdog);
+      this.connectionWatchdog = null;
+    }
+  }
+
+  async restartIce() {
+    if (!this.pc || this.isClosed || !this.isInitiator) return;
+    try {
+      const offer = await this.pc.createOffer({ iceRestart: true });
+      await this.pc.setLocalDescription(offer);
+      this.signalSender(this.targetPeerId, {
+        type: 'offer',
+        sdp: offer
+      });
+    } catch (e) {
+      console.warn('[BeamDrop WebRTC] Failed to restart ICE:', e);
+    }
   }
 
   setupDataChannel(channel) {
     this.dataChannel = channel;
     this.dataChannel.binaryType = 'arraybuffer';
 
+    try {
+      // 4 MB threshold to maintain high transmission queue without stalling
+      this.dataChannel.bufferedAmountLowThreshold = 4 * 1024 * 1024;
+    } catch (e) {}
+
     this.dataChannel.onopen = () => {
+      this.clearWatchdog();
       console.log('[BeamDrop WebRTC] DataChannel open & ready for file transfer.');
       this.onChannelOpen(this.dataChannel);
     };
@@ -97,7 +167,7 @@ export class WebRTCConnection {
     this.isInitiator = true;
     this.initPeerConnection();
 
-    // Create ordered reliable data channel
+    // Create ordered reliable data channel for file transfer
     const channel = this.pc.createDataChannel('beam-file-transfer', {
       ordered: true
     });
@@ -146,6 +216,7 @@ export class WebRTCConnection {
    * Handle incoming ICE candidate
    */
   async handleCandidate(candidateData) {
+    if (!candidateData || !candidateData.candidate) return;
     const candidate = new RTCIceCandidate(candidateData);
     if (this.pc && this.pc.remoteDescription && this.pc.remoteDescription.type) {
       try {
@@ -171,6 +242,7 @@ export class WebRTCConnection {
 
   close() {
     this.isClosed = true;
+    this.clearWatchdog();
     if (this.dataChannel) {
       try {
         this.dataChannel.close();

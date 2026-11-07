@@ -7,10 +7,11 @@
 import { FileReceiverSession } from './fs-stream.js';
 import { requestWakeLock, releaseWakeLock } from './wake-lock.js';
 
-// Tunable constants
-export const CHUNK_SIZE = 256 * 1024; // 256 KB per WebRTC packet
-export const BUFFERED_AMOUNT_HIGH = 1.5 * 1024 * 1024; // 1.5 MB high watermark
-export const BUFFERED_AMOUNT_LOW = 256 * 1024; // 256 KB threshold to resume
+// Tunable constants for maximum P2P Wi-Fi throughput
+export const CHUNK_SIZE = 64 * 1024; // 64 KB per packet (universally safe MTU across iOS Safari, Android, and Desktop)
+export const BLOCK_READ_SIZE = 2 * 1024 * 1024; // 2 MB disk read block to eliminate file slicing promise overhead
+export const BUFFERED_AMOUNT_HIGH = 16 * 1024 * 1024; // 16 MB high watermark (keeps SCTP congestion window saturated)
+export const BUFFERED_AMOUNT_LOW = 4 * 1024 * 1024; // 4 MB low watermark to resume without draining socket queue
 
 /**
  * Metrics Calculator
@@ -24,7 +25,6 @@ export class TransferMetrics {
     this.lastSampleTime = this.startTime;
     this.lastSampleBytes = 0;
     this.currentSpeed = 0; // Bytes/sec
-    this.history = [];
   }
 
   update(transferredBytes) {
@@ -32,16 +32,15 @@ export class TransferMetrics {
     const now = performance.now();
     const timeDelta = (now - this.lastSampleTime) / 1000;
 
-    // Sample every 250ms for smooth live updates
-    if (timeDelta >= 0.25) {
+    // Sample every 200ms for stable and responsive live speed updates
+    if (timeDelta >= 0.20) {
       const bytesDelta = transferredBytes - this.lastSampleBytes;
       const instantSpeed = bytesDelta / timeDelta;
 
-      // Exponential moving average for stable speed display
       if (this.currentSpeed === 0) {
         this.currentSpeed = instantSpeed;
       } else {
-        this.currentSpeed = 0.65 * instantSpeed + 0.35 * this.currentSpeed;
+        this.currentSpeed = 0.70 * instantSpeed + 0.30 * this.currentSpeed;
       }
 
       this.lastSampleTime = now;
@@ -89,20 +88,43 @@ export class TransferSender {
 
   /**
    * Wait for dataChannel buffer to drain below threshold
+   * Includes safety timer & polling so iOS Safari never freezes
    */
   waitForBackpressure() {
-    return new Promise((resolve) => {
-      if (this.dataChannel.bufferedAmount <= BUFFERED_AMOUNT_LOW) {
-        resolve();
-        return;
-      }
+    if (this.dataChannel.bufferedAmount <= BUFFERED_AMOUNT_LOW) {
+      return Promise.resolve();
+    }
 
-      this.dataChannel.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW;
-      const onLow = () => {
-        this.dataChannel.removeEventListener('bufferedamountlow', onLow);
+    return new Promise((resolve) => {
+      let resolved = false;
+
+      const cleanup = () => {
+        if (resolved) return;
+        resolved = true;
+        try {
+          this.dataChannel.removeEventListener('bufferedamountlow', onLow);
+        } catch (e) {}
+        clearInterval(pollInterval);
+        clearTimeout(safetyTimeout);
         resolve();
       };
-      this.dataChannel.addEventListener('bufferedamountlow', onLow);
+
+      const onLow = () => cleanup();
+
+      try {
+        this.dataChannel.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW;
+        this.dataChannel.addEventListener('bufferedamountlow', onLow, { once: true });
+      } catch (e) {}
+
+      // Fast 20ms poll interval fallback in case bufferedamountlow event is delayed or dropped
+      const pollInterval = setInterval(() => {
+        if (this.dataChannel.bufferedAmount <= BUFFERED_AMOUNT_LOW) {
+          cleanup();
+        }
+      }, 20);
+
+      // Max safety timeout (200ms) ensuring the pipeline never halts indefinitely
+      const safetyTimeout = setTimeout(cleanup, 200);
     });
   }
 
@@ -144,13 +166,14 @@ export class TransferSender {
       }));
 
       let cumulativeTransferred = 0;
+      let lastProgressReportTime = 0;
 
       for (let i = 0; i < this.files.length; i++) {
         if (this.isCancelled) break;
 
         const file = this.files[i];
         this.currentFileIndex = i;
-        const fileId = `f_${i}_${file.size}`;
+        const fileId = `f_${i}_${file.size}_${Date.now()}`;
 
         if (this.options.onFileStart) {
           this.options.onFileStart({
@@ -174,35 +197,50 @@ export class TransferSender {
 
         let fileOffset = 0;
 
-        // Stream file chunk by chunk
+        // Stream file using 2 MB block reads to minimize disk promise overhead
         while (fileOffset < file.size) {
           if (this.isCancelled) break;
 
-          // Backpressure check
-          if (this.dataChannel.bufferedAmount > BUFFERED_AMOUNT_HIGH) {
-            await this.waitForBackpressure();
-          }
+          const blockEnd = Math.min(fileOffset + BLOCK_READ_SIZE, file.size);
+          const blockSlice = file.slice(fileOffset, blockEnd);
+          const blockBuffer = await blockSlice.arrayBuffer();
 
-          if (this.isCancelled) break;
+          let blockOffset = 0;
+          while (blockOffset < blockBuffer.byteLength) {
+            if (this.isCancelled) break;
 
-          const end = Math.min(fileOffset + CHUNK_SIZE, file.size);
-          const slice = file.slice(fileOffset, end);
-          const chunkBuffer = await slice.arrayBuffer();
+            // Backpressure check
+            if (this.dataChannel.bufferedAmount > BUFFERED_AMOUNT_HIGH) {
+              await this.waitForBackpressure();
+            }
 
-          this.dataChannel.send(chunkBuffer);
+            if (this.isCancelled) break;
 
-          fileOffset += chunkBuffer.byteLength;
-          cumulativeTransferred += chunkBuffer.byteLength;
+            const chunkEnd = Math.min(blockOffset + CHUNK_SIZE, blockBuffer.byteLength);
+            const chunk = blockBuffer.slice(blockOffset, chunkEnd);
 
-          const stats = this.metrics.update(cumulativeTransferred);
-          if (this.options.onProgress) {
-            this.options.onProgress({
-              ...stats,
-              currentFileIndex: i,
-              currentFileName: file.name,
-              currentFileSize: file.size,
-              currentFileTransferred: fileOffset
-            });
+            this.dataChannel.send(chunk);
+
+            const chunkSize = chunk.byteLength;
+            blockOffset += chunkSize;
+            fileOffset += chunkSize;
+            cumulativeTransferred += chunkSize;
+
+            // Throttle UI progress update to ~12 FPS (every 80ms)
+            const now = performance.now();
+            if (now - lastProgressReportTime >= 80 || fileOffset >= file.size) {
+              lastProgressReportTime = now;
+              const stats = this.metrics.update(cumulativeTransferred);
+              if (this.options.onProgress) {
+                this.options.onProgress({
+                  ...stats,
+                  currentFileIndex: i,
+                  currentFileName: file.name,
+                  currentFileSize: file.size,
+                  currentFileTransferred: fileOffset
+                });
+              }
+            }
           }
         }
 
@@ -211,8 +249,7 @@ export class TransferSender {
         // Signal file end and wait for receiver ack
         const ackPromise = new Promise((resolve) => {
           this.pendingFileAckResolver = resolve;
-          // 5-second ack timeout safety
-          setTimeout(resolve, 5000);
+          setTimeout(resolve, 5000); // 5-second ack timeout safety
         });
 
         this.dataChannel.send(JSON.stringify({
@@ -290,6 +327,7 @@ export class TransferReceiver {
     this.cumulativeReceived = 0;
     this.isCancelled = false;
     this.currentFileInfo = null;
+    this.lastProgressReportTime = 0;
   }
 
   async handleMessage(event) {
@@ -301,14 +339,19 @@ export class TransferReceiver {
       await this.session.writeChunk(chunk);
       this.cumulativeReceived += chunk.byteLength;
 
-      if (this.metrics) {
-        const stats = this.metrics.update(this.cumulativeReceived);
-        if (this.options.onProgress) {
-          this.options.onProgress({
-            ...stats,
-            currentFileName: this.currentFileInfo ? this.currentFileInfo.name : '',
-            currentFileSize: this.currentFileInfo ? this.currentFileInfo.size : 0
-          });
+      // Throttle receiver UI updates to every 80ms to prevent main thread layout thrashing
+      const now = performance.now();
+      if (now - this.lastProgressReportTime >= 80) {
+        this.lastProgressReportTime = now;
+        if (this.metrics) {
+          const stats = this.metrics.update(this.cumulativeReceived);
+          if (this.options.onProgress) {
+            this.options.onProgress({
+              ...stats,
+              currentFileName: this.currentFileInfo ? this.currentFileInfo.name : '',
+              currentFileSize: this.currentFileInfo ? this.currentFileInfo.size : 0
+            });
+          }
         }
       }
       return;

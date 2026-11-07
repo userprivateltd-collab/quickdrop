@@ -42,17 +42,15 @@ function getIceServers() {
     return stunList.map(url => ({ urls: url.startsWith('stun:') ? url : `stun:${url}` }));
   }
 
-  // High-reliability public STUN servers
+  // High-reliability public STUN servers (2 fast endpoints to avoid parallel query congestion)
   return [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' }
   ];
 }
 
 const ICE_SERVERS = getIceServers();
-const DEFAULT_CHUNK_SIZE = 256 * 1024; // 256 KB
+const DEFAULT_CHUNK_SIZE = 64 * 1024; // 64 KB (optimal MTU for iOS WebKit & Android)
 
 /**
  * Determine if an IP address is a private / local / loopback LAN address

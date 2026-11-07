@@ -51,6 +51,25 @@ let pendingOutgoing = null; // Outgoing transfer request
 let networkInfo = { clientIp: '', isLan: true, localAddresses: [], port: 3000 };
 let currentLanUrl = window.location.origin;
 
+// Fast WebRTC signal buffer and watchdog
+const earlySignalBuffer = new Map(); // peerId -> Array of early signals (offers/candidates)
+let waitingTimeout = null;
+
+async function flushEarlySignals(peerId) {
+  if (!earlySignalBuffer.has(peerId) || !activeRtc) return;
+  const queued = earlySignalBuffer.get(peerId);
+  earlySignalBuffer.delete(peerId);
+  for (const data of queued) {
+    try {
+      if (data.type === 'offer') await activeRtc.handleOffer(data.sdp);
+      else if (data.type === 'answer') await activeRtc.handleAnswer(data.sdp);
+      else if (data.type === 'ice-candidate') await activeRtc.handleCandidate(data.candidate);
+    } catch (err) {
+      console.warn('[BeamDrop] Error flushing early signal:', err);
+    }
+  }
+}
+
 // DOM Elements
 const dom = {
   // Theme & Profile
@@ -458,7 +477,10 @@ function renderPeers() {
  */
 function initiateSendFilesToPeer(peer) {
   selectedPeer = peer;
-  dom.globalFileInput.click();
+  if (dom.globalFileInput) {
+    dom.globalFileInput.value = ''; // Always clear previous file selection so re-selecting triggers reliably
+    dom.globalFileInput.click();
+  }
 }
 
 dom.globalFileInput.addEventListener('change', () => {
@@ -568,9 +590,19 @@ dom.btnConfirmSend.addEventListener('click', () => {
   dom.waitingHeadline.textContent = `Waiting for ${selectedPeer.deviceName}...`;
   dom.waitingPeerSub.textContent = `Sent request for ${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''} (${formatBytes(totalSize)}).`;
   openModal(dom.modalWaiting);
+
+  // 45-second timeout watchdog for recipient response
+  clearTimeout(waitingTimeout);
+  waitingTimeout = setTimeout(() => {
+    if (pendingOutgoing && pendingOutgoing.transferId === transferId) {
+      dom.waitingHeadline.textContent = `No response from ${selectedPeer.deviceName}`;
+      dom.waitingPeerSub.textContent = 'Make sure the recipient is on the same Wi-Fi with sendit open on their screen.';
+    }
+  }, 45000);
 });
 
 dom.btnCancelWaiting.addEventListener('click', () => {
+  clearTimeout(waitingTimeout);
   if (pendingOutgoing) {
     signaling.sendSignal(pendingOutgoing.targetPeer.id, {
       type: 'transfer-cancel',
@@ -874,24 +906,16 @@ dom.btnDeclineRequest.addEventListener('click', () => {
   closeModal(dom.modalRequest);
 });
 
-dom.btnAcceptRequest.addEventListener('click', async () => {
+dom.btnAcceptRequest.addEventListener('click', () => {
   if (!pendingIncoming) return;
   const req = pendingIncoming;
   pendingIncoming = null;
   closeModal(dom.modalRequest);
 
-  // Optional: Pick destination directory on desktop Chrome if multiple files
-  let dirHandle = null;
-  if (req.files.length > 1 && Capabilities.hasDirectoryPicker) {
-    try {
-      dirHandle = await requestSaveDirectory();
-    } catch (e) {}
-  }
+  // Instant response - zero blocking OS folder dialogs
+  setupReceiverWebRTC(req, null);
 
-  // Setup WebRTC connection for receiver
-  setupReceiverWebRTC(req, dirHandle);
-
-  // Send accepted signal to sender
+  // Send accepted signal to sender immediately
   signaling.sendSignal(req.fromPeerId, {
     type: 'transfer-response',
     transferId: req.transferId,
@@ -909,6 +933,10 @@ function setupReceiverWebRTC(req, dirHandle) {
     signaling.sendSignal(targetId, signalData);
   });
 
+  activeRtc.onStatusText = (txt) => {
+    if (dom.txCurrentFilename) dom.txCurrentFilename.textContent = txt;
+  };
+
   // Setup UI elements
   dom.transferHeadlineText.textContent = 'Receiving Files...';
   dom.txNodeSenderIcon.innerHTML = getDeviceIconSvg(req.fromType);
@@ -917,6 +945,9 @@ function setupReceiverWebRTC(req, dirHandle) {
   dom.txNodeReceiverName.textContent = profile.deviceName;
   resetTransferUI(req.totalSize);
   openModal(dom.modalTransfer);
+
+  // Flush any early queued signals from this peer
+  flushEarlySignals(req.fromPeerId);
 
   activeRtc.onChannelOpen = (channel) => {
     const receiverEngine = new TransferReceiver(channel, {
@@ -973,6 +1004,10 @@ function setupSenderWebRTC(pending) {
     signaling.sendSignal(targetId, signalData);
   });
 
+  activeRtc.onStatusText = (txt) => {
+    if (dom.txCurrentFilename) dom.txCurrentFilename.textContent = txt;
+  };
+
   // Setup UI elements
   dom.transferHeadlineText.textContent = 'Sending Files...';
   dom.txNodeSenderIcon.innerHTML = getDeviceIconSvg(profile.deviceType);
@@ -981,6 +1016,9 @@ function setupSenderWebRTC(pending) {
   dom.txNodeReceiverName.textContent = pending.targetPeer.deviceName;
   resetTransferUI(pending.totalSize);
   openModal(dom.modalTransfer);
+
+  // Flush any early queued signals from this peer
+  flushEarlySignals(pending.targetPeer.id);
 
   activeRtc.onChannelOpen = async (channel) => {
     const senderEngine = new TransferSender(channel, pending.files, {
@@ -1087,6 +1125,32 @@ function handleTransferComplete(data) {
   if (data.direction === 'received' && data.files && data.files.length > 0) {
     dom.completeFilesContainer.style.display = 'block';
     dom.completeFilesList.innerHTML = '';
+
+    // Add 1-click Download All button if multiple files
+    const downloadables = data.files.filter(f => f.url);
+    if (downloadables.length > 1) {
+      const downloadAllWrap = document.createElement('div');
+      downloadAllWrap.style.marginBottom = '12px';
+      downloadAllWrap.innerHTML = `
+        <button id="btn-download-all" class="btn btn-primary btn-sm" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download All (${downloadables.length} files)
+        </button>
+      `;
+      downloadAllWrap.querySelector('#btn-download-all').onclick = () => {
+        downloadables.forEach((f, idx) => {
+          setTimeout(() => {
+            const a = document.createElement('a');
+            a.href = f.url;
+            a.download = f.name;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+          }, idx * 250);
+        });
+      };
+      dom.completeFilesList.appendChild(downloadAllWrap);
+    }
 
     data.files.forEach(f => {
       const item = document.createElement('div');
@@ -1233,9 +1297,14 @@ signaling.onSignal = async (fromPeerId, fromName, fromType, data) => {
   // 2. Transfer response (accept/decline)
   if (data.type === 'transfer-response') {
     if (pendingOutgoing && pendingOutgoing.transferId === data.transferId) {
-      closeModal(dom.modalWaiting);
+      clearTimeout(waitingTimeout);
       if (data.accepted) {
+        closeModal(dom.modalWaiting);
         setupSenderWebRTC(pendingOutgoing);
+      } else {
+        dom.waitingHeadline.textContent = `${pendingOutgoing.targetPeer.deviceName} declined.`;
+        dom.waitingPeerSub.textContent = data.reason || 'Transfer request was rejected.';
+        setTimeout(() => closeModal(dom.modalWaiting), 2500);
       }
       pendingOutgoing = null;
     }
@@ -1260,6 +1329,12 @@ signaling.onSignal = async (fromPeerId, fromName, fromType, data) => {
     } else if (data.type === 'ice-candidate') {
       await activeRtc.handleCandidate(data.candidate);
     }
+  } else {
+    // Buffer early signals so rapid offers/candidates are never dropped
+    if (!earlySignalBuffer.has(fromPeerId)) {
+      earlySignalBuffer.set(fromPeerId, []);
+    }
+    earlySignalBuffer.get(fromPeerId).push(data);
   }
 };
 

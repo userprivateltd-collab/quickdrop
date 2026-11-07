@@ -65,11 +65,23 @@ export class FileReceiverSession {
    * @param {{ id: string, name: string, size: number, type: string }} fileInfo
    */
   async startFile(fileInfo) {
-    // 1. If directory handle is available, stream directly to disk without memory usage
+    // 1. If directory handle is available, stream directly to disk with batching
     if (this.dirHandle) {
       try {
         const fileHandle = await this.dirHandle.getFileHandle(fileInfo.name, { create: true });
         const writable = await fileHandle.createWritable();
+        let writeBatch = [];
+        let batchBytes = 0;
+        const FLUSH_BYTES = 1024 * 1024; // 1 MB disk batch
+
+        const flushBatch = async () => {
+          if (writeBatch.length === 0) return;
+          const combined = writeBatch.length === 1 ? writeBatch[0] : new Blob(writeBatch);
+          writeBatch = [];
+          batchBytes = 0;
+          await writable.write(combined);
+        };
+
         this.currentWriter = {
           mode: 'fsa-stream',
           fileInfo,
@@ -77,10 +89,15 @@ export class FileReceiverSession {
           writable,
           writtenBytes: 0,
           write: async (chunk) => {
-            await writable.write(chunk);
+            writeBatch.push(chunk);
+            batchBytes += chunk.byteLength;
             this.currentWriter.writtenBytes += chunk.byteLength;
+            if (batchBytes >= FLUSH_BYTES) {
+              await flushBatch();
+            }
           },
           finish: async () => {
+            await flushBatch();
             await writable.close();
             const result = {
               id: fileInfo.id,
@@ -94,6 +111,7 @@ export class FileReceiverSession {
             return result;
           },
           abort: async () => {
+            writeBatch = [];
             try {
               await writable.abort();
             } catch (e) {}
@@ -122,6 +140,7 @@ export class FileReceiverSession {
       finish: async () => {
         try {
           const blob = new Blob(chunks, { type: fileInfo.type || 'application/octet-stream' });
+          chunks.length = 0; // Immediately free chunk references to release memory
           const url = URL.createObjectURL(blob);
           const result = {
             id: fileInfo.id,
