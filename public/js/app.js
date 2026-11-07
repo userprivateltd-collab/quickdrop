@@ -978,8 +978,12 @@ function setupReceiverWebRTC(req, dirHandle) {
       },
       onError: (err) => {
         console.error('Transfer failed:', err);
-        closeModal(dom.modalTransfer);
-        cleanupActiveTransfer();
+        dom.transferHeadlineText.textContent = 'Transfer Failed';
+        dom.txCurrentFilename.textContent = err && err.message ? err.message : 'Transfer interrupted.';
+        setTimeout(() => {
+          closeModal(dom.modalTransfer);
+          cleanupActiveTransfer();
+        }, 3000);
       }
     }, dirHandle);
 
@@ -991,6 +995,7 @@ function setupReceiverWebRTC(req, dirHandle) {
     };
 
     channel.onmessage = (e) => receiverEngine.handleMessage(e);
+    activeRtc.onChannelMessage = (e) => receiverEngine.handleMessage(e);
   };
 }
 
@@ -1046,8 +1051,12 @@ function setupSenderWebRTC(pending) {
       },
       onError: (err) => {
         console.error('Transfer error:', err);
-        closeModal(dom.modalTransfer);
-        cleanupActiveTransfer();
+        dom.transferHeadlineText.textContent = 'Transfer Error';
+        dom.txCurrentFilename.textContent = err && err.message ? err.message : 'Transfer interrupted.';
+        setTimeout(() => {
+          closeModal(dom.modalTransfer);
+          cleanupActiveTransfer();
+        }, 3000);
       }
     });
 
@@ -1058,7 +1067,8 @@ function setupSenderWebRTC(pending) {
       peerType: pending.targetPeer.deviceType
     };
 
-    channel.onmessage = (e) => senderEngine.handleMessage(e.data);
+    channel.onmessage = (e) => senderEngine.handleMessage(e);
+    activeRtc.onChannelMessage = (e) => senderEngine.handleMessage(e);
 
     // Start transmission!
     await senderEngine.start();
@@ -1067,8 +1077,12 @@ function setupSenderWebRTC(pending) {
   // Create offer to recipient
   activeRtc.createOffer().catch(err => {
     console.error('Failed to establish WebRTC connection:', err);
-    closeModal(dom.modalTransfer);
-    cleanupActiveTransfer();
+    dom.transferHeadlineText.textContent = 'Connection Error';
+    dom.txCurrentFilename.textContent = 'Could not create direct P2P link.';
+    setTimeout(() => {
+      closeModal(dom.modalTransfer);
+      cleanupActiveTransfer();
+    }, 3000);
   });
 }
 

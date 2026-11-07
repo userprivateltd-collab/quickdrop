@@ -9,9 +9,9 @@ import { requestWakeLock, releaseWakeLock } from './wake-lock.js';
 
 // Tunable constants for maximum P2P Wi-Fi throughput
 export const CHUNK_SIZE = 64 * 1024; // 64 KB per packet (universally safe MTU across iOS Safari, Android, and Desktop)
-export const BLOCK_READ_SIZE = 2 * 1024 * 1024; // 2 MB disk read block to eliminate file slicing promise overhead
-export const BUFFERED_AMOUNT_HIGH = 16 * 1024 * 1024; // 16 MB high watermark (keeps SCTP congestion window saturated)
-export const BUFFERED_AMOUNT_LOW = 4 * 1024 * 1024; // 4 MB low watermark to resume without draining socket queue
+export const BLOCK_READ_SIZE = 1024 * 1024; // 1 MB disk read block to eliminate file slicing promise overhead
+export const BUFFERED_AMOUNT_HIGH = 2 * 1024 * 1024; // 2 MB safe high watermark (under 16 MB browser limit)
+export const BUFFERED_AMOUNT_LOW = 512 * 1024; // 512 KB low watermark to resume without draining socket queue
 
 /**
  * Metrics Calculator
@@ -131,7 +131,8 @@ export class TransferSender {
   /**
    * Handle incoming message on data channel (for file acknowledgments)
    */
-  handleMessage(data) {
+  handleMessage(eventOrData) {
+    const data = eventOrData && eventOrData.data !== undefined ? eventOrData.data : eventOrData;
     if (typeof data === 'string') {
       try {
         const msg = JSON.parse(data);
@@ -271,11 +272,21 @@ export class TransferSender {
       }
 
       if (!this.isCancelled) {
-        // Send transfer complete
-        this.dataChannel.send(JSON.stringify({
-          action: 'TRANSFER_COMPLETE',
-          transferId: this.transferId
-        }));
+        // Wait until all buffered bytes have completely drained out of the network buffer
+        while (this.dataChannel && this.dataChannel.bufferedAmount > 0 && !this.isCancelled) {
+          await new Promise(r => setTimeout(r, 40));
+        }
+
+        // Send transfer complete message
+        if (this.dataChannel && this.dataChannel.readyState === 'open') {
+          this.dataChannel.send(JSON.stringify({
+            action: 'TRANSFER_COMPLETE',
+            transferId: this.transferId
+          }));
+        }
+
+        // 400ms grace period to let receiver finish final assembly before socket termination
+        await new Promise(r => setTimeout(r, 400));
 
         const finalStats = this.metrics.update(cumulativeTransferred);
         if (this.options.onComplete) {
@@ -330,12 +341,14 @@ export class TransferReceiver {
     this.lastProgressReportTime = 0;
   }
 
-  async handleMessage(event) {
+  async handleMessage(eventOrData) {
     if (this.isCancelled) return;
 
-    // Binary chunk data
-    if (event.data instanceof ArrayBuffer) {
-      const chunk = event.data;
+    const data = eventOrData && eventOrData.data !== undefined ? eventOrData.data : eventOrData;
+
+    // Binary chunk data (supports both ArrayBuffer and Blob)
+    if (data instanceof ArrayBuffer || data instanceof Blob) {
+      const chunk = data instanceof Blob ? await data.arrayBuffer() : data;
       await this.session.writeChunk(chunk);
       this.cumulativeReceived += chunk.byteLength;
 
@@ -358,9 +371,9 @@ export class TransferReceiver {
     }
 
     // JSON control message
-    if (typeof event.data === 'string') {
+    if (typeof data === 'string') {
       try {
-        const msg = JSON.parse(event.data);
+        const msg = JSON.parse(data);
         await this.handleControlMessage(msg);
       } catch (err) {
         console.error('[BeamDrop Receiver] Error handling control message:', err);

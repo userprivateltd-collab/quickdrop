@@ -135,29 +135,48 @@ export class WebRTCConnection {
     this.dataChannel.binaryType = 'arraybuffer';
 
     try {
-      // 4 MB threshold to maintain high transmission queue without stalling
-      this.dataChannel.bufferedAmountLowThreshold = 4 * 1024 * 1024;
+      this.dataChannel.bufferedAmountLowThreshold = 512 * 1024;
     } catch (e) {}
 
-    this.dataChannel.onopen = () => {
+    const handleOpen = () => {
       this.clearWatchdog();
       console.log('[BeamDrop WebRTC] DataChannel open & ready for file transfer.');
-      this.onChannelOpen(this.dataChannel);
+      if (this.onChannelOpen) {
+        this.onChannelOpen(this.dataChannel);
+      }
     };
 
+    this.dataChannel.onopen = handleOpen;
+
     this.dataChannel.onmessage = (event) => {
-      this.onChannelMessage(event);
+      if (this.onChannelMessage) {
+        this.onChannelMessage(event);
+      }
     };
 
     this.dataChannel.onclose = () => {
       console.log('[BeamDrop WebRTC] DataChannel closed.');
-      this.onChannelClose();
+      if (this.onChannelClose) {
+        this.onChannelClose();
+      }
     };
 
     this.dataChannel.onerror = (err) => {
       console.error('[BeamDrop WebRTC] DataChannel error:', err);
-      this.onError(err);
+      if (this.onError) {
+        this.onError(err);
+      }
     };
+
+    // CRITICAL: On the receiver side, incoming data channels in ondatachannel
+    // are frequently already in the 'open' state! onopen will NOT fire if already open.
+    if (channel.readyState === 'open') {
+      queueMicrotask(() => {
+        if (this.dataChannel && this.dataChannel.readyState === 'open') {
+          handleOpen();
+        }
+      });
+    }
   }
 
   /**
